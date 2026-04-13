@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -117,6 +117,25 @@ class BridgewoodExecutionReportResponse(BaseModel):
     portfolio_after: BridgewoodPortfolio
 
 
+class BridgewoodExecutionListItem(BaseModel):
+    id: str
+    external_order_id: str
+    symbol: str
+    side: str
+    quantity: float
+    price_per_share: float
+    gross_notional: float
+    fees: float
+    realized_pnl: float
+    executed_at: datetime
+    created_at: datetime
+
+
+class BridgewoodExecutionPage(BaseModel):
+    items: list[BridgewoodExecutionListItem]
+    next_cursor: str | None = None
+
+
 class BridgewoodAgentIdentity(BaseModel):
     agent_id: str
     user_id: str
@@ -124,3 +143,9 @@ class BridgewoodAgentIdentity(BaseModel):
     icon_url: str | None = None
     starting_cash: float
     trading_mode: str
+
+
+class BridgewoodErrorPayload(BaseModel):
+    detail: str
+    code: str
+    errors: list[dict[str, Any]] | None = None

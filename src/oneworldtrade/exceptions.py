@@ -53,21 +53,30 @@ class BridgewoodError(OneWorldTradeError):
         *,
         status_code: int | None = None,
         response_text: str | None = None,
+        code: str | None = None,
+        errors: list[dict[str, object]] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.response_text = response_text
+        self.code = code
+        self.errors = errors
 
     @property
     def is_retryable(self) -> bool:
-        return self.status_code is None or self.status_code in {
-            408,
-            429,
-            500,
-            502,
-            503,
-            504,
-        }
+        return (
+            self.code == "RATE_LIMITED"
+            or self.status_code is None
+            or self.status_code
+            in {
+                408,
+                429,
+                500,
+                502,
+                503,
+                504,
+            }
+        )
 
 
 class ReconciliationError(OneWorldTradeError):

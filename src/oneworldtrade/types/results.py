@@ -21,6 +21,7 @@ class TradeResult(BaseModel):
     report_requested: bool = True
     report_attempted: bool = False
     report_succeeded: bool = False
+    already_reported: bool = False
     report_errors: list[str] = Field(default_factory=list)
     bridgewood_reporting_mode: BridgewoodReportingMode | None = None
     bridgewood_execution: BridgewoodExecution | None = None

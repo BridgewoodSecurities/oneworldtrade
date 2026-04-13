@@ -7,7 +7,9 @@ import httpx
 from ..exceptions import BridgewoodError
 from .models import (
     BridgewoodAgentIdentity,
+    BridgewoodErrorPayload,
     BridgewoodExecution,
+    BridgewoodExecutionPage,
     BridgewoodExecutionReportResponse,
     BridgewoodPortfolio,
 )
@@ -22,16 +24,23 @@ def _normalize_base_url(base_url: str) -> str:
     return stripped
 
 
-def _detail_from_response(response: httpx.Response) -> str:
+def _error_from_response(
+    response: httpx.Response,
+) -> tuple[str, str | None, list[dict[str, object]] | None]:
     try:
         payload = response.json()
     except ValueError:
-        return response.text
+        return response.text, None, None
     if isinstance(payload, dict):
-        detail = payload.get("detail")
-        if isinstance(detail, str):
-            return detail
-    return response.text
+        try:
+            parsed = BridgewoodErrorPayload.model_validate(payload)
+        except Exception:
+            detail = payload.get("detail")
+            if isinstance(detail, str):
+                return detail, None, None
+        else:
+            return parsed.detail, parsed.code, parsed.errors
+    return response.text, None, None
 
 
 class BridgewoodClient:
@@ -65,6 +74,22 @@ class BridgewoodClient:
     def get_portfolio(self) -> BridgewoodPortfolio:
         payload = self._request("GET", "/portfolio")
         return BridgewoodPortfolio.model_validate(payload)
+
+    def list_executions(
+        self,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> BridgewoodExecutionPage:
+        payload = self._request(
+            "GET",
+            "/executions",
+            params={
+                "limit": limit,
+                **({"cursor": cursor} if cursor else {}),
+            },
+        )
+        return BridgewoodExecutionPage.model_validate(payload)
 
     def get_prices(self, symbols: list[str]) -> dict[str, Any]:
         joined = ",".join(
@@ -101,10 +126,14 @@ class BridgewoodClient:
             raise BridgewoodError("Network error while talking to Bridgewood.") from exc
 
         if response.is_error:
+            detail, code, errors = _error_from_response(response)
+            code_fragment = f" {code}:" if code else ":"
             raise BridgewoodError(
-                f"Bridgewood request failed with {response.status_code}: "
-                f"{_detail_from_response(response)}",
+                f"Bridgewood request failed with {response.status_code}"
+                f"{code_fragment} {detail}",
                 status_code=response.status_code,
                 response_text=response.text,
+                code=code,
+                errors=errors,
             )
         return response.json()

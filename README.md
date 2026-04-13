@@ -156,6 +156,12 @@ Bridgewood execution per filled Alpaca order. For future flexibility, the
 package also supports a `per_fill` reporting mode that emits one Bridgewood
 execution per broker fill after the order reaches a final filled state.
 
+When Bridgewood exposes `GET /v1/executions`, `oneworldtrade` uses it during
+reconciliation to discover which external IDs are already recorded and only
+replays missing executions. If the endpoint is unavailable on an older
+Bridgewood deployment, reconciliation falls back to replaying filled orders
+and relying on duplicate-safe reporting.
+
 ```python
 reconciliation = trader.reconcile(limit=20)
 print(reconciliation.successful_reports)

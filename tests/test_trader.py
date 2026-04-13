@@ -8,6 +8,8 @@ import pytest
 
 from oneworldtrade.bridgewood.models import (
     BridgewoodAgentIdentity,
+    BridgewoodExecutionListItem,
+    BridgewoodExecutionPage,
     BridgewoodExecution,
     BridgewoodExecutionReportResponse,
     BridgewoodExecutionReportResult,
@@ -160,10 +162,15 @@ class FakeBridgewood:
         *,
         responses: Sequence[BridgewoodExecutionReportResponse] | None = None,
         errors: Sequence[BridgewoodError] | None = None,
+        execution_pages: Sequence[BridgewoodExecutionPage] | None = None,
     ) -> None:
         self.responses = list(responses or [])
         self.errors = list(errors or [])
+        self.execution_pages = list(
+            execution_pages or [BridgewoodExecutionPage(items=[], next_cursor=None)]
+        )
         self.reported: list[list[BridgewoodExecution]] = []
+        self.execution_list_calls: list[tuple[int, str | None]] = []
 
     def get_me(self) -> BridgewoodAgentIdentity:
         return BridgewoodAgentIdentity(
@@ -179,6 +186,17 @@ class FakeBridgewood:
 
     def get_prices(self, symbols: list[str]) -> dict[str, object]:
         return {"prices": {symbol: 100.0 for symbol in symbols}}
+
+    def list_executions(
+        self,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> BridgewoodExecutionPage:
+        self.execution_list_calls.append((limit, cursor))
+        if self.execution_pages:
+            return self.execution_pages.pop(0)
+        return BridgewoodExecutionPage(items=[], next_cursor=None)
 
     def report_executions(
         self,
@@ -476,3 +494,196 @@ def test_reconcile_replays_only_filled_orders() -> None:
         "alpaca-order-1",
         "alpaca-order-2",
     ]
+
+
+def test_reconcile_skips_orders_already_recorded_in_bridgewood() -> None:
+    older = _order(
+        order_id="alpaca-order-1",
+        status=BrokerOrderStatus.FILLED,
+        created_at=datetime(2026, 4, 12, 15, 30, tzinfo=UTC),
+        filled_at=datetime(2026, 4, 12, 15, 45, tzinfo=UTC),
+    )
+    newer = _order(
+        order_id="alpaca-order-2",
+        status=BrokerOrderStatus.FILLED,
+        created_at=datetime(2026, 4, 13, 15, 30, tzinfo=UTC),
+        filled_at=datetime(2026, 4, 13, 15, 45, tzinfo=UTC),
+    )
+    broker = FakeBroker(
+        submitted_order=older,
+        fills={
+            "alpaca-order-1": [_fill("alpaca-order-1", "fill-1")],
+            "alpaca-order-2": [_fill("alpaca-order-2", "fill-2")],
+        },
+        listed_orders=[newer, older],
+    )
+    reporter = FakeBridgewood(
+        execution_pages=[
+            BridgewoodExecutionPage(
+                items=[
+                    BridgewoodExecutionListItem(
+                        id="exec-older",
+                        external_order_id="alpaca-order-1",
+                        symbol="AAPL",
+                        side="buy",
+                        quantity=1.0,
+                        price_per_share=187.52,
+                        gross_notional=187.52,
+                        fees=0.0,
+                        realized_pnl=0.0,
+                        executed_at=datetime(2026, 4, 12, 15, 45, tzinfo=UTC),
+                        created_at=datetime(2026, 4, 12, 15, 45, tzinfo=UTC),
+                    )
+                ],
+                next_cursor=None,
+            )
+        ],
+        responses=[_report_response("recorded")],
+    )
+    trader = Trader(broker=broker, reporter=reporter, config=_config())
+
+    result = trader.reconcile(after=timedelta(days=2), limit=10)
+
+    assert result.checked_orders == 2
+    assert result.attempted_reports == 1
+    assert result.successful_reports == 1
+    assert [item.broker_order_id for item in result.results] == [
+        "alpaca-order-1",
+        "alpaca-order-2",
+    ]
+    assert result.results[0].already_reported is True
+    assert result.results[0].report_attempted is False
+    assert result.results[1].report_attempted is True
+    assert len(reporter.reported) == 1
+    assert reporter.reported[0][0].external_order_id == "alpaca-order-2"
+
+
+def test_reconcile_reports_only_missing_per_fill_executions() -> None:
+    filled_order = _order(
+        order_id="alpaca-order-1",
+        status=BrokerOrderStatus.FILLED,
+        created_at=datetime(2026, 4, 13, 15, 30, tzinfo=UTC),
+        filled_at=datetime(2026, 4, 13, 15, 46, tzinfo=UTC),
+        filled_qty=Decimal("2"),
+    )
+    fills = [
+        BrokerFill(
+            broker_fill_id="fill-1",
+            broker_order_id="alpaca-order-1",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=Decimal("1"),
+            price=Decimal("187.50"),
+            fees=Decimal("0.01"),
+            executed_at=datetime(2026, 4, 13, 15, 45, tzinfo=UTC),
+        ),
+        BrokerFill(
+            broker_fill_id="fill-2",
+            broker_order_id="alpaca-order-1",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=Decimal("1"),
+            price=Decimal("187.54"),
+            fees=Decimal("0.02"),
+            executed_at=datetime(2026, 4, 13, 15, 46, tzinfo=UTC),
+        ),
+    ]
+    broker = FakeBroker(
+        submitted_order=filled_order,
+        fills={"alpaca-order-1": fills},
+        listed_orders=[filled_order],
+    )
+    reporter = FakeBridgewood(
+        execution_pages=[
+            BridgewoodExecutionPage(
+                items=[
+                    BridgewoodExecutionListItem(
+                        id="exec-fill-1",
+                        external_order_id="alpaca-order-1:fill:fill-1",
+                        symbol="AAPL",
+                        side="buy",
+                        quantity=1.0,
+                        price_per_share=187.50,
+                        gross_notional=187.50,
+                        fees=0.01,
+                        realized_pnl=0.0,
+                        executed_at=datetime(2026, 4, 13, 15, 45, tzinfo=UTC),
+                        created_at=datetime(2026, 4, 13, 15, 45, tzinfo=UTC),
+                    )
+                ],
+                next_cursor=None,
+            )
+        ],
+        responses=[
+            BridgewoodExecutionReportResponse(
+                results=[
+                    BridgewoodExecutionReportResult(
+                        external_order_id="alpaca-order-1:fill:fill-2",
+                        status="recorded",
+                        execution_id="exec-fill-2",
+                        symbol="AAPL",
+                        side="buy",
+                        quantity=1.0,
+                        price_per_share=187.54,
+                        gross_notional=187.54,
+                        fees=0.02,
+                        executed_at=datetime(2026, 4, 13, 15, 46, tzinfo=UTC),
+                    )
+                ],
+                portfolio_after=_report_response("recorded").portfolio_after,
+            )
+        ],
+    )
+    trader = Trader(
+        broker=broker,
+        reporter=reporter,
+        config=_config(reporting_mode=BridgewoodReportingMode.PER_FILL),
+    )
+
+    result = trader.reconcile(after=timedelta(days=1), limit=10)
+
+    assert result.checked_orders == 1
+    assert result.attempted_reports == 1
+    assert len(reporter.reported) == 1
+    assert [item.external_order_id for item in reporter.reported[0]] == [
+        "alpaca-order-1:fill:fill-2"
+    ]
+
+
+def test_reconcile_falls_back_when_execution_listing_is_unavailable() -> None:
+    filled_order = _order(
+        order_id="alpaca-order-1",
+        status=BrokerOrderStatus.FILLED,
+        created_at=datetime(2026, 4, 13, 15, 30, tzinfo=UTC),
+        filled_at=datetime(2026, 4, 13, 15, 45, tzinfo=UTC),
+    )
+    broker = FakeBroker(
+        submitted_order=filled_order,
+        fills={"alpaca-order-1": [_fill("alpaca-order-1", "fill-1")]},
+        listed_orders=[filled_order],
+    )
+    reporter = FakeBridgewood(
+        errors=[],
+        execution_pages=[],
+        responses=[_report_response("recorded")],
+    )
+
+    def _missing_list_executions(
+        *, limit: int = 100, cursor: str | None = None
+    ) -> BridgewoodExecutionPage:
+        del limit, cursor
+        raise BridgewoodError(
+            "Bridgewood request failed with 404 NOT_FOUND: Missing endpoint",
+            status_code=404,
+            code="NOT_FOUND",
+        )
+
+    reporter.list_executions = _missing_list_executions  # type: ignore[method-assign]
+    trader = Trader(broker=broker, reporter=reporter, config=_config())
+
+    result = trader.reconcile(after=timedelta(days=1), limit=10)
+
+    assert result.checked_orders == 1
+    assert result.attempted_reports == 1
+    assert result.successful_reports == 1
+    assert len(reporter.reported) == 1

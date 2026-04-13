@@ -17,7 +17,11 @@ from ..types.orders import OrderRequest, OrderSide, OrderType, TimeInForce
 from ..types.results import ReconciliationResult, TradeResult
 from .idempotency import bridgewood_executions_from_order, build_client_order_id
 from .lifecycle import wait_for_terminal_order
-from .reconciliation import resolve_after_timestamp, summarize_reconciliation
+from .reconciliation import (
+    fetch_recorded_external_ids,
+    resolve_after_timestamp,
+    summarize_reconciliation,
+)
 
 
 LOGGER = get_logger(__name__)
@@ -267,7 +271,7 @@ class Trader:
         limit: int = 50,
         raise_on_report_failure: bool = False,
     ) -> ReconciliationResult:
-        self._ensure_reporting_available()
+        reporter = self._require_reporter()
         after_timestamp = resolve_after_timestamp(after)
         orders = list(
             self.broker.list_orders(status="closed", after=after_timestamp, limit=limit)
@@ -278,15 +282,61 @@ class Trader:
                 order.filled_at or order.created_at or datetime.now(timezone.utc)
             ),
         )
+        expected_execution_ids: set[str] = set()
+        fills_by_order_id: dict[str, list[BrokerFill]] = {}
+
+        for order in ordered_fills:
+            fills = self._load_fills(order.order_id)
+            fills_by_order_id[order.order_id] = fills
+            expected_execution_ids.update(
+                execution.external_order_id
+                for execution in bridgewood_executions_from_order(
+                    order,
+                    fills,
+                    mode=self.config.bridgewood_reporting_mode,
+                )
+            )
+
+        try:
+            recorded_execution_ids = fetch_recorded_external_ids(
+                reporter,
+                expected_external_ids=expected_execution_ids,
+                after=after_timestamp,
+            )
+        except BridgewoodError as exc:
+            if exc.status_code not in {404, 405}:
+                raise
+            LOGGER.warning(
+                "Bridgewood execution listing is unavailable; falling back to "
+                "replay-based reconciliation."
+            )
+            recorded_execution_ids = set()
+
         results = [
-            self.sync_order(
-                order.order_id,
+            self._sync_result(
+                TradeResult(
+                    order_request=OrderRequest(
+                        symbol=order.symbol,
+                        side=order.side,
+                        qty=order.qty,
+                        order_type=order.order_type,
+                        limit_price=order.limit_price,
+                        time_in_force=order.time_in_force,
+                        client_order_id=order.client_order_id,
+                    ),
+                    broker_order_id=order.order_id,
+                    broker_order=order,
+                    wait_for_fill=False,
+                    report_requested=True,
+                ),
                 report_to_bridgewood=True,
                 raise_on_report_failure=raise_on_report_failure,
+                fills=fills_by_order_id[order.order_id],
+                recorded_external_ids=recorded_execution_ids,
             )
             for order in ordered_fills
         ]
-        return summarize_reconciliation(results)
+        return summarize_reconciliation(results, checked_orders=len(ordered_fills))
 
     def _sync_result(
         self,
@@ -294,12 +344,18 @@ class Trader:
         *,
         report_to_bridgewood: bool,
         raise_on_report_failure: bool,
+        fills: list[BrokerFill] | None = None,
+        recorded_external_ids: set[str] | None = None,
     ) -> TradeResult:
         if result.broker_order is None:
             return result
 
-        fills = self._load_fills(result.broker_order.order_id)
-        result.fills = fills
+        loaded_fills = (
+            fills
+            if fills is not None
+            else self._load_fills(result.broker_order.order_id)
+        )
+        result.fills = loaded_fills
 
         if not result.broker_order.is_filled:
             LOGGER.info(
@@ -314,7 +370,7 @@ class Trader:
 
         executions = bridgewood_executions_from_order(
             result.broker_order,
-            fills,
+            loaded_fills,
             mode=self.config.bridgewood_reporting_mode,
         )
         result.bridgewood_reporting_mode = self.config.bridgewood_reporting_mode
@@ -322,8 +378,25 @@ class Trader:
         if len(executions) == 1:
             result.bridgewood_execution = executions[0]
 
+        executions_to_report = executions
+        if recorded_external_ids is not None:
+            executions_to_report = [
+                execution
+                for execution in executions
+                if execution.external_order_id not in recorded_external_ids
+            ]
+            if not executions_to_report:
+                result.already_reported = True
+                result.report_succeeded = True
+                result.retriable = False
+                LOGGER.info(
+                    "Bridgewood already recorded execution set for Alpaca order %s.",
+                    result.broker_order.order_id,
+                )
+                return result
+
         response = self._report_executions(
-            executions,
+            executions_to_report,
             raise_on_report_failure=raise_on_report_failure,
             result=result,
         )
@@ -331,6 +404,9 @@ class Trader:
             result.bridgewood_results = response.results
             result.report_succeeded = all(
                 item.status in {"recorded", "duplicate"} for item in response.results
+            )
+            result.already_reported = all(
+                item.status == "duplicate" for item in response.results
             )
             result.retriable = not result.report_succeeded
         return result
