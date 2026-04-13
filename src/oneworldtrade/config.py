@@ -15,8 +15,6 @@ def _strip_trailing_slash(value: str) -> str:
 
 class OneWorldTradeConfig(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
         extra="ignore",
     )
 
@@ -200,4 +198,3 @@ class OneWorldTradeConfig(BaseSettings):
             "report_backoff_seconds": self.report_backoff_seconds,
             "log_level": self.log_level,
         }
-

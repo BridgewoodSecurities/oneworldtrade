@@ -60,6 +60,10 @@ python -m venv .venv
 
 ## Environment
 
+`Trader.from_env()` reads from the ambient process environment provided by the
+agent runtime, shell, container, or deployment platform. `oneworldtrade` does
+not auto-load a local `.env` file.
+
 Minimum environment:
 
 ```bash
@@ -80,6 +84,9 @@ ONEWORLDTRADE_REPORT_MAX_ATTEMPTS=3
 ONEWORLDTRADE_REPORT_BACKOFF_SECONDS=1
 ONEWORLDTRADE_LOG_LEVEL=INFO
 ```
+
+If you want `.env` loading in your own agent repo, do that at the application
+layer before constructing `Trader`.
 
 ## Quick Start
 
@@ -153,4 +160,3 @@ oneworldtrade reconcile --limit 20
 - Alpaca is wrapped behind a broker client interface so future brokers can be added without rewriting strategy code.
 - The default public API is `Trader`.
 - Lower-level broker and Bridgewood clients are still available when needed.
-
