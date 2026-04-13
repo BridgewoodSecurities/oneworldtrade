@@ -27,7 +27,9 @@ def summarize_reconciliation(results: list[TradeResult]) -> ReconciliationResult
         if item.status == "duplicate"
     )
     failed_reports = sum(
-        1 for result in results if result.report_attempted and not result.report_succeeded
+        1
+        for result in results
+        if result.report_attempted and not result.report_succeeded
     )
     return ReconciliationResult(
         checked_orders=len(results),
@@ -37,4 +39,3 @@ def summarize_reconciliation(results: list[TradeResult]) -> ReconciliationResult
         failed_reports=failed_reports,
         results=results,
     )
-

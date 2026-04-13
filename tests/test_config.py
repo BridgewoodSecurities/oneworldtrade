@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from oneworldtrade.config import OneWorldTradeConfig
+from oneworldtrade.execution.trader import Trader
 
 
 def test_config_supports_existing_env_names(monkeypatch) -> None:
@@ -16,3 +17,13 @@ def test_config_supports_existing_env_names(monkeypatch) -> None:
     assert config.resolved_bridgewood_api_base == "https://bridgewood.onrender.com/v1"
     assert config.bridgewood_agent_api_key == "bgw_test_agent_key"
 
+
+def test_from_env_allows_broker_only_construction(monkeypatch) -> None:
+    monkeypatch.setenv("ALPACA_API_KEY", "alpaca-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "alpaca-secret")
+    monkeypatch.delenv("BRIDGEWOOD_AGENT_API_KEY", raising=False)
+
+    trader = Trader.from_env()
+
+    assert trader.reporter is None
+    trader.close()

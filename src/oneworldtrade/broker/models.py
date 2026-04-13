@@ -125,4 +125,3 @@ class BrokerOrder(BaseModel):
     @property
     def is_filled(self) -> bool:
         return self.status == BrokerOrderStatus.FILLED
-

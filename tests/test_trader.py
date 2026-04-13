@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
+
 from oneworldtrade.bridgewood.models import (
     BridgewoodAgentIdentity,
     BridgewoodExecution,
@@ -18,10 +20,11 @@ from oneworldtrade.broker.models import (
     BrokerOrderStatus,
 )
 from oneworldtrade.config import OneWorldTradeConfig
-from oneworldtrade.exceptions import BridgewoodError
+from oneworldtrade.exceptions import BridgewoodError, ConfigurationError
 from oneworldtrade.execution.trader import Trader
 from oneworldtrade.types.fills import BrokerFill
 from oneworldtrade.types.orders import OrderRequest, OrderSide, OrderType, TimeInForce
+from oneworldtrade.types.reporting import BridgewoodReportingMode
 
 
 UTC = timezone.utc
@@ -46,7 +49,9 @@ def _order(
         status=status,
         qty=Decimal("1"),
         filled_qty=filled_qty,
-        filled_avg_price=Decimal("187.52") if status == BrokerOrderStatus.FILLED else None,
+        filled_avg_price=(
+            Decimal("187.52") if status == BrokerOrderStatus.FILLED else None
+        ),
         created_at=created_at or datetime(2026, 4, 13, 15, 30, tzinfo=UTC),
         filled_at=filled_at,
     )
@@ -190,7 +195,10 @@ class FakeBridgewood:
         return None
 
 
-def _config(max_attempts: int = 3) -> OneWorldTradeConfig:
+def _config(
+    max_attempts: int = 3,
+    reporting_mode: BridgewoodReportingMode = BridgewoodReportingMode.AGGREGATED_ORDER,
+) -> OneWorldTradeConfig:
     return OneWorldTradeConfig.model_construct(
         alpaca_api_key="alpaca-key",
         alpaca_secret_key="alpaca-secret",
@@ -198,6 +206,7 @@ def _config(max_attempts: int = 3) -> OneWorldTradeConfig:
         alpaca_base_url=None,
         bridgewood_api_base="https://bridgewood.onrender.com/v1",
         bridgewood_agent_api_key="bgw_test",
+        bridgewood_reporting_mode=reporting_mode,
         poll_interval_seconds=0.0 + 0.01,
         fill_timeout_seconds=0.0 + 0.05,
         http_timeout_seconds=15.0,
@@ -226,9 +235,48 @@ def test_filled_order_is_reported_once() -> None:
     assert result.filled is True
     assert result.report_succeeded is True
     assert result.bridgewood_execution is not None
+    assert result.bridgewood_executions == [result.bridgewood_execution]
     assert result.bridgewood_execution.external_order_id == "alpaca-order-1"
     assert len(reporter.reported) == 1
     assert reporter.reported[0][0].symbol == "AAPL"
+
+
+def test_broker_only_trader_can_trade_without_reporting() -> None:
+    filled_order = _order(
+        order_id="alpaca-order-1",
+        status=BrokerOrderStatus.FILLED,
+        filled_at=datetime(2026, 4, 13, 15, 45, tzinfo=UTC),
+    )
+    broker = FakeBroker(
+        submitted_order=filled_order,
+        get_order_sequence=[filled_order],
+        fills={"alpaca-order-1": [_fill("alpaca-order-1")]},
+    )
+    trader = Trader.for_broker_only(broker=broker, config=_config())
+
+    result = trader.buy("AAPL", qty=Decimal("1"), report_to_bridgewood=False)
+
+    assert result.filled is True
+    assert result.report_attempted is False
+    assert broker.submitted_requests
+
+
+def test_broker_only_trader_rejects_reporting_before_submission() -> None:
+    filled_order = _order(
+        order_id="alpaca-order-1",
+        status=BrokerOrderStatus.FILLED,
+        filled_at=datetime(2026, 4, 13, 15, 45, tzinfo=UTC),
+    )
+    broker = FakeBroker(
+        submitted_order=filled_order,
+        get_order_sequence=[filled_order],
+    )
+    trader = Trader.for_broker_only(broker=broker, config=_config())
+
+    with pytest.raises(ConfigurationError, match="Bridgewood reporting was requested"):
+        trader.buy("AAPL", qty=Decimal("1"))
+
+    assert broker.submitted_requests == []
 
 
 def test_duplicate_bridgewood_report_is_treated_as_success() -> None:
@@ -277,6 +325,93 @@ def test_bridgewood_failure_returns_partial_success() -> None:
     assert result.report_succeeded is False
     assert result.retriable is True
     assert len(result.report_errors) == 2
+
+
+def test_per_fill_reporting_mode_sends_one_execution_per_fill() -> None:
+    filled_order = _order(
+        order_id="alpaca-order-1",
+        status=BrokerOrderStatus.FILLED,
+        filled_at=datetime(2026, 4, 13, 15, 46, tzinfo=UTC),
+        filled_qty=Decimal("2"),
+    )
+    broker = FakeBroker(
+        submitted_order=filled_order,
+        get_order_sequence=[filled_order],
+        fills={
+            "alpaca-order-1": [
+                BrokerFill(
+                    broker_fill_id="fill-1",
+                    broker_order_id="alpaca-order-1",
+                    symbol="AAPL",
+                    side=OrderSide.BUY,
+                    quantity=Decimal("1"),
+                    price=Decimal("187.50"),
+                    fees=Decimal("0.01"),
+                    executed_at=datetime(2026, 4, 13, 15, 45, tzinfo=UTC),
+                ),
+                BrokerFill(
+                    broker_fill_id="fill-2",
+                    broker_order_id="alpaca-order-1",
+                    symbol="AAPL",
+                    side=OrderSide.BUY,
+                    quantity=Decimal("1"),
+                    price=Decimal("187.54"),
+                    fees=Decimal("0.02"),
+                    executed_at=datetime(2026, 4, 13, 15, 46, tzinfo=UTC),
+                ),
+            ]
+        },
+    )
+    reporter = FakeBridgewood(
+        responses=[
+            BridgewoodExecutionReportResponse(
+                results=[
+                    BridgewoodExecutionReportResult(
+                        external_order_id="alpaca-order-1:fill:fill-1",
+                        status="recorded",
+                        execution_id="exec-1",
+                        symbol="AAPL",
+                        side="buy",
+                        quantity=1.0,
+                        price_per_share=187.50,
+                        gross_notional=187.50,
+                        fees=0.01,
+                        executed_at=datetime(2026, 4, 13, 15, 45, tzinfo=UTC),
+                    ),
+                    BridgewoodExecutionReportResult(
+                        external_order_id="alpaca-order-1:fill:fill-2",
+                        status="recorded",
+                        execution_id="exec-2",
+                        symbol="AAPL",
+                        side="buy",
+                        quantity=1.0,
+                        price_per_share=187.54,
+                        gross_notional=187.54,
+                        fees=0.02,
+                        executed_at=datetime(2026, 4, 13, 15, 46, tzinfo=UTC),
+                    ),
+                ],
+                portfolio_after=_report_response("recorded").portfolio_after,
+            )
+        ]
+    )
+    trader = Trader(
+        broker=broker,
+        reporter=reporter,
+        config=_config(reporting_mode=BridgewoodReportingMode.PER_FILL),
+    )
+
+    result = trader.sync_order("alpaca-order-1")
+
+    assert result.bridgewood_reporting_mode == BridgewoodReportingMode.PER_FILL
+    assert result.bridgewood_execution is None
+    assert len(result.bridgewood_executions) == 2
+    assert [item.external_order_id for item in result.bridgewood_executions] == [
+        "alpaca-order-1:fill:fill-1",
+        "alpaca-order-1:fill:fill-2",
+    ]
+    assert len(reporter.reported[0]) == 2
+    assert reporter.reported[0][0].executed_at < reporter.reported[0][1].executed_at
 
 
 def test_non_filled_terminal_order_is_not_reported() -> None:

@@ -43,4 +43,3 @@ def wait_for_terminal_order(
             )
 
     return OrderLifecycleSnapshot(order=order, timed_out=True, poll_count=poll_count)
-

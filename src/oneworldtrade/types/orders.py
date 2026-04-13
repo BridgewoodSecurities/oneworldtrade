@@ -90,11 +90,7 @@ class OrderRequest(BaseModel):
         if self.order_type == OrderType.MARKET and self.limit_price is not None:
             raise ValueError("limit_price is only allowed for limit orders")
         if self.extended_hours and not (
-            self.order_type == OrderType.LIMIT
-            and self.time_in_force == TimeInForce.DAY
+            self.order_type == OrderType.LIMIT and self.time_in_force == TimeInForce.DAY
         ):
-            raise ValueError(
-                "extended_hours is only supported for DAY limit orders"
-            )
+            raise ValueError("extended_hours is only supported for DAY limit orders")
         return self
-

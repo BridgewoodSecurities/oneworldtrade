@@ -3,9 +3,7 @@ from __future__ import annotations
 import logging
 
 
-DEFAULT_LOG_FORMAT = (
-    "%(asctime)s %(levelname)s [%(name)s] %(message)s"
-)
+DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -21,4 +19,3 @@ def configure_logging(level: str = "INFO") -> None:
 
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
-

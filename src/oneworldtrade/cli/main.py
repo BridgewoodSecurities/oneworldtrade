@@ -31,11 +31,15 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     config_parser = subparsers.add_parser("config", help="Inspect configuration")
-    config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
+    config_subparsers = config_parser.add_subparsers(
+        dest="config_command", required=True
+    )
     config_subparsers.add_parser("show", help="Print redacted config")
 
     broker_parser = subparsers.add_parser("broker", help="Broker utilities")
-    broker_subparsers = broker_parser.add_subparsers(dest="broker_command", required=True)
+    broker_subparsers = broker_parser.add_subparsers(
+        dest="broker_command", required=True
+    )
     broker_subparsers.add_parser("verify", help="Verify Alpaca credentials")
 
     bridgewood_parser = subparsers.add_parser("bridgewood", help="Bridgewood utilities")
@@ -44,6 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     bridgewood_subparsers.add_parser("verify", help="Verify Bridgewood agent key")
+    subparsers.add_parser(
+        "broker-only-verify",
+        help="Verify broker-only configuration without Bridgewood",
+    )
 
     for name in ("buy", "sell"):
         command = subparsers.add_parser(name, help=f"Place a {name} order")
@@ -122,9 +130,18 @@ def main(argv: list[str] | None = None) -> int:
             reporter.close()
         return 0
 
-    config.validate_for_trading()
-    with Trader.from_env(config) as trader:
-        if args.command in {"buy", "sell"}:
+    if args.command == "broker-only-verify":
+        config.validate_for_broker()
+        with Trader.from_env_broker_only(config) as trader:
+            _print(trader.verify_broker())
+        return 0
+
+    if args.command in {"buy", "sell"}:
+        if args.no_report:
+            config.validate_for_broker()
+        else:
+            config.validate_for_trading()
+        with Trader.from_env(config) as trader:
             method = trader.buy if args.command == "buy" else trader.sell
             trade_result = method(
                 args.symbol,
@@ -138,7 +155,12 @@ def main(argv: list[str] | None = None) -> int:
             _print(trade_result.model_dump(mode="json"))
             return 0
 
-        if args.command == "sync-order":
+    if args.command == "sync-order":
+        if args.no_report:
+            config.validate_for_broker()
+        else:
+            config.validate_for_trading()
+        with Trader.from_env(config) as trader:
             trade_result = trader.sync_order(
                 args.broker_order_id,
                 report_to_bridgewood=not args.no_report,
@@ -146,7 +168,9 @@ def main(argv: list[str] | None = None) -> int:
             _print(trade_result.model_dump(mode="json"))
             return 0
 
-        if args.command == "reconcile":
+    if args.command == "reconcile":
+        config.validate_for_trading()
+        with Trader.from_env(config) as trader:
             reconciliation_result = trader.reconcile(
                 limit=args.limit,
                 after=timedelta(hours=args.after_hours),

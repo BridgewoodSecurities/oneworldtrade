@@ -60,6 +60,13 @@ class BridgewoodExecution(BaseModel):
             raise ValueError("price-like values must be non-negative")
         return normalized
 
+    @field_validator("executed_at")
+    @classmethod
+    def _validate_timestamp(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("executed_at must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
     def to_payload(self) -> dict[str, object]:
         return {
             "external_order_id": self.external_order_id,
@@ -68,11 +75,11 @@ class BridgewoodExecution(BaseModel):
             "quantity": float(self.quantity),
             "price": float(self.price),
             "fees": float(self.fees),
-            "executed_at": self.executed_at.astimezone(timezone.utc)
-            .isoformat()
-            .replace("+00:00", "Z")
-            if self.executed_at.tzinfo
-            else self.executed_at.isoformat() + "Z",
+            "executed_at": (
+                self.executed_at.astimezone(timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            ),
         }
 
 

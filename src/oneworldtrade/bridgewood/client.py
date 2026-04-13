@@ -67,7 +67,9 @@ class BridgewoodClient:
         return BridgewoodPortfolio.model_validate(payload)
 
     def get_prices(self, symbols: list[str]) -> dict[str, Any]:
-        joined = ",".join(symbol.strip().upper() for symbol in symbols if symbol.strip())
+        joined = ",".join(
+            symbol.strip().upper() for symbol in symbols if symbol.strip()
+        )
         payload = self._request("GET", "/prices", params={"symbols": joined})
         if not isinstance(payload, dict):
             raise BridgewoodError("Bridgewood /prices returned a non-object payload.")

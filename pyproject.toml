@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oneworldtrade"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agent-side trading SDK for Alpaca execution and Bridgewood reporting."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "black==25.1.0",
   "mypy>=1.10,<2.0",
   "pytest>=8.2,<9.0",
   "ruff>=0.5,<1.0"
@@ -64,6 +65,10 @@ testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py311"
+line-length = 88
+
+[tool.black]
+target-version = ["py311"]
 line-length = 88
 
 [tool.mypy]

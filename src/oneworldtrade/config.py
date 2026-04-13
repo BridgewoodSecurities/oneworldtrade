@@ -4,6 +4,7 @@ from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .exceptions import ConfigurationError
+from .types.reporting import BridgewoodReportingMode
 
 
 def _strip_trailing_slash(value: str) -> str:
@@ -62,6 +63,12 @@ class OneWorldTradeConfig(BaseSettings):
             "ONEWORLDTRADE_BRIDGEWOOD_AGENT_API_KEY",
         ),
     )
+    bridgewood_reporting_mode: BridgewoodReportingMode = Field(
+        default=BridgewoodReportingMode.AGGREGATED_ORDER,
+        validation_alias=AliasChoices(
+            "ONEWORLDTRADE_BRIDGEWOOD_REPORTING_MODE",
+        ),
+    )
     poll_interval_seconds: float = Field(
         default=2.0,
         validation_alias=AliasChoices(
@@ -115,7 +122,9 @@ class OneWorldTradeConfig(BaseSettings):
         stripped = _strip_trailing_slash(value)
         return stripped or None
 
-    @field_validator("poll_interval_seconds", "fill_timeout_seconds", "http_timeout_seconds")
+    @field_validator(
+        "poll_interval_seconds", "fill_timeout_seconds", "http_timeout_seconds"
+    )
     @classmethod
     def _validate_positive_float(cls, value: float) -> float:
         if value <= 0:
@@ -191,6 +200,7 @@ class OneWorldTradeConfig(BaseSettings):
             "alpaca_base_url": self.resolved_alpaca_base_url,
             "bridgewood_api_base": self.resolved_bridgewood_api_base,
             "bridgewood_agent_api_key": _redact(self.bridgewood_agent_api_key),
+            "bridgewood_reporting_mode": self.bridgewood_reporting_mode.value,
             "poll_interval_seconds": self.poll_interval_seconds,
             "fill_timeout_seconds": self.fill_timeout_seconds,
             "http_timeout_seconds": self.http_timeout_seconds,

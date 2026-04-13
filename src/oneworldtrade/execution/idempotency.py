@@ -8,6 +8,7 @@ from ..bridgewood.models import BridgewoodExecution
 from ..broker.models import BrokerOrder
 from ..exceptions import BridgewoodError
 from ..types.fills import BrokerFill
+from ..types.reporting import BridgewoodReportingMode
 
 
 def build_client_order_id(prefix: str = "owt") -> str:
@@ -16,6 +17,10 @@ def build_client_order_id(prefix: str = "owt") -> str:
 
 def external_order_id_for_order(order: BrokerOrder) -> str:
     return order.order_id
+
+
+def external_order_id_for_fill(order: BrokerOrder, fill: BrokerFill) -> str:
+    return f"{order.order_id}:fill:{fill.broker_fill_id}"
 
 
 def bridgewood_execution_from_order(
@@ -54,3 +59,29 @@ def bridgewood_execution_from_order(
         executed_at=normalized_timestamp,
     )
 
+
+def bridgewood_executions_from_order(
+    order: BrokerOrder,
+    fills: list[BrokerFill],
+    *,
+    mode: BridgewoodReportingMode,
+) -> list[BridgewoodExecution]:
+    if mode == BridgewoodReportingMode.AGGREGATED_ORDER:
+        return [bridgewood_execution_from_order(order, fills)]
+
+    if fills:
+        sorted_fills = sorted(fills, key=lambda fill: fill.executed_at)
+        return [
+            BridgewoodExecution(
+                external_order_id=external_order_id_for_fill(order, fill),
+                symbol=fill.symbol,
+                side=fill.side,
+                quantity=fill.quantity,
+                price=fill.price,
+                fees=fill.fees,
+                executed_at=fill.executed_at.astimezone(timezone.utc),
+            )
+            for fill in sorted_fills
+        ]
+
+    return [bridgewood_execution_from_order(order, fills)]

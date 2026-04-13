@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from ..exceptions import BrokerError, OrderSubmissionError
-from ..logging import get_logger
+from ..log import get_logger
 from ..types.fills import BrokerFill
 from ..types.orders import OrderRequest, OrderSide, OrderType, TimeInForce
 from .base import BrokerClient
@@ -162,7 +162,9 @@ class AlpacaBrokerClient(BrokerClient):
         return sorted(collected.values(), key=lambda fill: fill.executed_at)
 
     def _dates_to_query(self, order: BrokerOrder) -> list[date]:
-        start = (order.created_at or order.filled_at or datetime.now(timezone.utc)).date()
+        start = (
+            order.created_at or order.filled_at or datetime.now(timezone.utc)
+        ).date()
         end = (order.filled_at or order.created_at or datetime.now(timezone.utc)).date()
         if end < start:
             start, end = end, start

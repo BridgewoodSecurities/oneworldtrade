@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -63,3 +63,9 @@ class BrokerFill(BaseModel):
             raise ValueError("fees must be non-negative")
         return normalized
 
+    @field_validator("executed_at")
+    @classmethod
+    def _validate_executed_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("executed_at must be timezone-aware")
+        return value.astimezone(timezone.utc)

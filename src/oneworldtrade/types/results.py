@@ -6,6 +6,7 @@ from ..bridgewood.models import BridgewoodExecution, BridgewoodExecutionReportRe
 from ..broker.models import BrokerOrder
 from .fills import BrokerFill
 from .orders import OrderRequest
+from .reporting import BridgewoodReportingMode
 
 
 class TradeResult(BaseModel):
@@ -21,7 +22,9 @@ class TradeResult(BaseModel):
     report_attempted: bool = False
     report_succeeded: bool = False
     report_errors: list[str] = Field(default_factory=list)
+    bridgewood_reporting_mode: BridgewoodReportingMode | None = None
     bridgewood_execution: BridgewoodExecution | None = None
+    bridgewood_executions: list[BridgewoodExecution] = Field(default_factory=list)
     bridgewood_results: list[BridgewoodExecutionReportResult] = Field(
         default_factory=list
     )
