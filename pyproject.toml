@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oneworldtrade"
+version = "0.1.0"
+description = "Agent-side trading SDK for Alpaca execution and Bridgewood reporting."
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = [
+  "alpaca",
+  "bridgewood",
+  "trading",
+  "agents",
+  "sdk"
+]
+dependencies = [
+  "httpx>=0.27,<1.0",
+  "pydantic>=2.8,<3.0",
+  "pydantic-settings>=2.3,<3.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.10,<2.0",
+  "pytest>=8.2,<9.0",
+  "ruff>=0.5,<1.0"
+]
+
+[project.scripts]
+oneworldtrade = "oneworldtrade.cli.main:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+oneworldtrade = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+packages = ["oneworldtrade"]
